@@ -10,7 +10,7 @@
 #
 # Requires: parted mount util-linux dosfstools rsync
 #
-# Version: v0.1
+# Version: v0.2
 # Author: Josh Schmelzle
 # License: BSD-3
 
@@ -24,7 +24,7 @@ function show_usage {
     echo "  output   Path where new A/B partitioned image will be saved"
     echo ""
     echo "Example:"
-    echo "  $0 wlanpi-os-20250403-221536-lite.img ab-partitioned-20250403.img"
+    echo "  $0 wlanpi-os-20250416-154720-lite.img wlanpi-os-20250416-154720-lite-AB-partitioned.img"
     exit 1
 }
 
@@ -45,6 +45,7 @@ if [ "$#" -ne 2 ]; then
 fi
 
 echo "=== WLAN Pi A/B partition script ==="
+echo ""
 
 INPUT_IMAGE="$1"
 OUTPUT_IMAGE="$2"
@@ -233,15 +234,27 @@ parted --script "$OUTPUT_IMAGE" unit s mkpart logical ext4 ${lp3_start} ${lp3_en
 
 partprobe "$NEW_LOOP_DEV"
 
-echo "Checking logical partitions ..."
-if [ ! -e "${NEW_LOOP_DEV}p5" ] || [ ! -e "${NEW_LOOP_DEV}p6" ] || [ ! -e "${NEW_LOOP_DEV}p7" ]; then
-    echo "ERROR: logical partitions not created properly"
+echo "Waiting for logical partitions to appear..."
+success=false
+for i in {1..10}; do
+    if [ -e "${NEW_LOOP_DEV}p5" ] && [ -e "${NEW_LOOP_DEV}p6" ] && [ -e "${NEW_LOOP_DEV}p7" ]; then
+        echo "All logical partitions detected after $i attempts"
+        success=true
+        break
+    fi
+    echo "Waiting for partitions (attempt $i)..."
+    sleep 1
+    partprobe "$NEW_LOOP_DEV"
+done
+
+if [ "$success" = false ]; then
+    echo "ERROR: Failed to detect logical partitions after 10 attempts"
     ls -la "${NEW_LOOP_DEV}"*
-    fdisk -l "$OUTPUT_IMAGE"
     exit 1
 fi
 
-sleep 2
+echo "Giving the system three seconds to stabilize ..."
+sleep 3
 
 BOOT1_DEV="${NEW_LOOP_DEV}p1"
 ROOT1_DEV="${NEW_LOOP_DEV}p2"
@@ -511,10 +524,18 @@ rm -rf "$TEMP_DIR" || {
   rm -rf "$TEMP_DIR" || echo "Warning: could not fully clean up temp directory"
 }
 
+echo "Calculating SHA-256 hash for $OUTPUT_IMAGE ..."
+HASH=$(sha256sum "$OUTPUT_IMAGE")
+echo "$HASH" > "$OUTPUT_IMAGE".sha256
+HASH_ONLY=$(echo "$HASH" | awk '{print $1}')
+
 echo ""
 echo "====================================="
 echo "A/B partitioned image created successfully!"
 echo "Output image: $OUTPUT_IMAGE"
+echo "SHA-256 hash: $HASH_ONLY"
+echo ""
+echo "Verify integrity with: sha256sum --check ""$OUTPUT_IMAGE"".sha256"
 echo ""
 echo "The image has the following partition structure:"
 echo "1: BOOTFS   - Primary boot partition (A)"
